@@ -1,164 +1,116 @@
 # encoding: utf-8
-require "logstash/util/buftok"
 require "logstash/util/charset"
 require "logstash/codecs/base"
 
-# produce an event with the payload as the 'message' field and a '_parsefailure' tag.
 class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
   config_name "trendmicro"
-
-  # Indicate the delimiter your input puts each CEF event.
-  config :delimiter, :validate => :string
-  
-    HEADER_FIELDS = ['cefVersion','Vendor','Product','Version','Signature_ID','Name','Severity']
-    # Translating and flattening the CEF extensions with known field names as documented in the Common Event Format whitepaper
-    MAPPINGS = {
-        "act" => "deviceAction",
-        "app" => "applicationProtocol",
-        "c6a1" => "deviceCustomIPv6Address1",
-        "c6a1Label" => "deviceCustomIPv6Address1Label",
-        "c6a2" => "deviceCustomIPv6Address2",
-        "c6a2Label" => "deviceCustomIPv6Address2Label",
-        "c6a3" => "deviceCustomIPv6Address3",
-        "c6a3Label" => "deviceCustomIPv6Address3Label",
-        "c6a4" => "deviceCustomIPv6Address4",
-        "c6a4Label" => "deviceCustomIPv6Address4Label",
-        "cat" => "deviceEventCategory",
-        "cfp1" => "deviceCustomFloatingPoint1",
-        "cfp1Label" => "deviceCustomFloatingPoint1Label",
-        "cfp2" => "deviceCustomFloatingPoint2",
-        "cfp2Label" => "deviceCustomFloatingPoint2Label",
-        "cfp3" => "deviceCustomFloatingPoint3",
-        "cfp3Label" => "deviceCustomFloatingPoint3Label",
-        "cfp4" => "deviceCustomFloatingPoint4",
-        "cfp4Label" => "deviceCustomFloatingPoint4Label",
-        "cn1" => "deviceCustomNumber1",
-        "cn1Label" => "deviceCustomNumber1Label",
-        "cn2" => "deviceCustomNumber2",
-        "cn2Label" => "deviceCustomNumber2Label",
-        "cn3" => "deviceCustomNumber3",
-        "cn3Label" => "deviceCustomNumber3Label",
-        "cnt" => "baseEventCount",
-        "cs1" => "deviceCustomString1",
-        "cs1Label" => "deviceCustomString1Label",
-        "cs2" => "deviceCustomString2",
-        "cs2Label" => "deviceCustomString2Label",
-        "cs3" => "deviceCustomString3",
-        "cs3Label" => "deviceCustomString3Label",
-        "cs4" => "deviceCustomString4",
-        "cs4Label" => "deviceCustomString4Label",
-        "cs5" => "deviceCustomString5",
-        "cs5Label" => "deviceCustomString5Label",
-        "cs6" => "deviceCustomString6",
-        "cs6Label" => "deviceCustomString6Label",
-        "dhost" => "destinationHostName",
-        "dmac" => "destinationMacAddress",
-        "dntdom" => "destinationNtDomain",
-        "dpid" => "destinationProcessId",
-        "dpriv" => "destinationUserPrivileges",
-        "dproc" => "destinationProcessName",
-        "dpt" => "destinationPort",
-        "dst" => "destinationAddress",
-        "duid" => "destinationUserId",
-        "duser" => "destinationUserName",
-        "dvc" => "deviceAddress",
-        "dvchost" => "deviceHostName",
-        "dvcpid" => "deviceProcessId",
-        "end" => "endTime",
-        "fname" => "fileName",
-        "fsize" => "fileSize",
-        "in" => "bytesIn",
-        "msg" => "message",
-        "out" => "bytesOut",
-        "outcome" => "eventOutcome",
-        "proto" => "transportProtocol",
-        "request" => "requestUrl",
-        "rt" => "deviceReceiptTime",
-        "shost" => "sourceHostName",
-        "smac" => "sourceMacAddress",
-        "sntdom" => "sourceNtDomain",
-        "spid" => "sourceProcessId",
-        "spriv" => "sourceUserPrivileges",
-        "sproc" => "sourceProcessName",
-        "spt" => "sourcePort",
-        "src" => "sourceAddress",
-        "start" => "startTime",
-        "suid" => "sourceUserId",
-        "suser" => "sourceUserName",
-        "ahost" => "agentHost",
-        "art" => "agentReceiptTime",
-        "at" => "agentType",
-        "aid" => "agentId",
-        "_cefVer" => "cefVersion",
-        "agt" => "agentAddress",
-        "av" => "agentVersion",
-        "atz" => "agentTimeZone",
-        "dtz" => "destinationTimeZone",
-        "slong" => "sourceLongitude",
-        "slat" => "sourceLatitude",
-        "dlong" => "destinationLongitude",
-        "dlat" => "destinationLatitude",
-        "catdt" => "categoryDeviceType",
+  # Campi header per i due tipi di possibili formati
+  CEF_HEADER_FIELDS = ['CEF_Version','Vendor','Product','Version','Signature_ID','Name','Severity']
+  LEEF_HEADER_FIELDS = ['LEEF_Version','Vendor','Product','Version','Event_ID']
+    
+  # Le seguenti coppie permettono di estendere i nomi dei campi della sezione Extension di log di TrendMicro
+  MAPPINGS = {
+        "act" => "Action",
+	"aggregationType" => "AggregationType",
+        "cat" => "Category",
+        "cn1" => "HostIdentifier",
+        "cn1Label" => "HostID",
+        "cn2" => "FileSize",
+        "cn2Label" => "FileSize",
+        "cn3" => "IntrusionPreventionPacketPosition",
+        "cn3Label" => "IntrusionPreventionPacketPosition",
+        "cnt" => "RepeatCount",
+        "cs1" => "CustomString1",#Reason/IntrusionPreventionFilterNote/SpecificSub-Rule
+        "cs1Label" => "CustomString1Label",#Reason/IntrusionPreventionNote/LIDescription
+        "cs2" => "TCPFlags",
+        "cs2Label" => "TCPFlags",
+        "cs3" => "CustomString3",#InfectedResource/PacketFragmentationInformation
+        "cs3Label" => "CustomString3Label",#InfectedResource/FragmentationBits
+        "cs4" => "CustomString4",#ResourceType/ICMPType
+        "cs4Label" => "CustomString4Label",#ResourceType/ICMP
+        "cs5" => "CustomString5",#RiskLevel/IntrusionPreventionStreamPosition
+        "cs5Label" => "CustomString5Label",#RiskLevel/IntrusionPreventionStreamPosition
+        "cs6" => "CustomString6",#Container/IntrusionPreventionFilterFlags
+        "cs6Label" => "CustomString6Label",#Container/IntrusionPreventionFlags
+        "dmac" => "DestinationMACAddress",
+        "dpt" => "DestinationPort",
+        "dst" => "DestinationIPAddress",
+        "duser" => "UserInformation",
+        "dvc" => "DeviceAddress",
+        "dvchost" => "DeviceHostName",
+        "desc" => "Description",
+	"dstMAC" => "DestinationMACAddress",
+	"dstPort" => "DestinationPort",
+        "fname" => "FileName",
+        "fsize" => "FileSize",
+	"filePath" => "FilePath",
+	"fileHash" => "FileHas",
+        "in" => "InboundBytesRead",
+        "msg" => "Message",
         "mrt" => "managerReceiptTime",
-        "amac" => "agentMacAddress"
-    }
+	"name" => "Name",
+        "out" => "OutboundBytesRead",
+        "proto" => "TransportProtocol",
+        "request" => "Request",
+        "repeatCount" => "RepeatCount",
+        "shost" => "SourceHostName",
+        "smac" => "SourceMacAddress",
+        "spt" => "SourcePort",
+        "src" => "SourceIPAddress",
+        "suid" => "SourceUserId",
+        "suser" => "SourceUserName",        
+        "srcMAC" => "SourceMACAddress",
+	"srcPort" => "SourcePort",
+	"sev" => "Severity",
+	"target" => "TargetEntity",
+	"targetID" => "TargetEntityID",
+	"targetType" => "TargetEntityType",
+	"TrendMicroDsTags" => "EventTags",
+	"TrendMicroDsTenant" => "TenantName",
+	"TrendMicroDsTenantId" => "TenantID",
+	"TrendMicroDsMalwareTarget" => "Target",
+	"TrendMicroDsMalwareTargetType" => "TargetType",
+	"TrendMicroDsFileMD5" => "FileMD5",
+	"TrendMicroDsFileSHA1" => "FileSHA1",
+	"TrendMicroDsFileSHA256" => "FileSHA256",
+	"TrendMicroDsFrameType" => "EthernetFrameType",
+	"TrendMicroDsPacketData" => "PacketData",
+	"TrendMicroDsDetectionConfidence" => "ThreatProbability",
+	"TrendMicroDsRelevantDetectionNames" => "ProbableThreatType",
+	"usrName" => "SourceUserName",
+	"xff" =>"X-Forwarded-For"
+  }
   
-    # Queste espressioni servono per individuare l'header. 
-    HEADER_PATTERN = /(?:\\\||\\\\|[^|])*?/
-    # Per trovare i campi dell'header indico il separatore: '|'
-    HEADER_SCANNER = /(#{HEADER_PATTERN})#{Regexp.quote('|')}/
+  # Regexp per individuare l'header, nella seconda si indica il separatore: '|'
+  HEADER_PATTERN = /(?:\\\||\\\\|[^|])*?/
+  HEADER_SCANNER = /(#{HEADER_PATTERN})#{Regexp.quote('|')}/
 
-    # Cache of a gsub pattern that matches a backslash-escaped backslash or backslash-escaped pipe, _capturing_ the escaped character
-    HEADER_ESCAPE_CAPTURE = /\\([\\|])/
+  # Regexp per trovare un backslash o un pipe che si trova dopo un backslash
+  HEADER_ESCAPE_CAPTURE = /\\([\\|])/
 
-
-  # Cache of a gsub pattern that matches a backslash-escaped backslash or backslash-escaped equals, _capturing_ the escaped character
+  # Regexp per trovare un backslash o un uguale che si trova dopo un backslash
   EXTENSION_VALUE_ESCAPE_CAPTURE = /\\([\\=])/
 
-  # Serve per individuare le key nel messaggio
+  # Regexp per individuare le key nella sezione Extension
   EXTENSION_KEY_PATTERN = /(?:\w+(?:\.[^\s]\w+[^\|\s\.\=\\]+)?(?==))/
-  # Serve per individuare i value della sezione Extension
+  # Regexp per individuare i value della sezione Extension
   EXTENSION_VALUE_PATTERN = /(?:\S|\s++(?!#{EXTENSION_KEY_PATTERN}=))*/
-  # Metto insieme per ottenere l'espressione che mi permette di individuare le coppie key/value
+  
+  # Uniamo le precedenti due regexp per individuare le coppie key/value
   EXTENSION_KEY_VALUE_SCANNER = /(#{EXTENSION_KEY_PATTERN})=(#{EXTENSION_VALUE_PATTERN})\s*/
 
   public
   def initialize(params={})
     super(params)
-
     # Input deve essere codificato in UTF-8
     @utf8_charset = LogStash::Util::Charset.new('UTF-8')
     @utf8_charset.logger = self.logger
-
-    # Se @delimiter è indicato tra i parametri... 
-    if @delimiter
-      @delimiter = @delimiter.gsub("\\r", "\r").gsub("\\n", "\n")
-      # ... @delimiter viene usato come elemento per la separazione delle linee		
-      @buffer = FileWatch::BufferedTokenizer.new(@delimiter)
-      # Nota: BufferedTokenizers permette di usare @delimeter in String#split per separare i dati in input
-      end
-  end
-   
-  # In questa sezione effettuiamo il parsing
-  public
-  def decode(data, &block)
-  # Se è indicato @delimeter allora si sta passando un blocco di log, quindi vanno separati  
-    if @delimiter
-      @buffer.extract(data).each do |line|
-	# Passiamo le diverse linee di log al parser        
-	handle(line, &block)
-      end
-    else
-      # Se è un solo log, lo passiamo direttamente al parser
-      handle(data, &block)
-    end
   end
 
   # Definiamo il parser vero e proprio
-  def handle(data, &block)
+  def decode(data, &block)
     # Creiamo l'evento
     event = LogStash::Event.new
-
     # Usiamo per il log la codifica UTF-8
     @utf8_charset.convert(data)
     # Se l'encoding non ha avuto successo non andiamo avanti nel parsing, perchè nascerebbero errori
@@ -171,38 +123,44 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
     
     # Il log da parsare viene inserito in una variabile dal nome unprocessed_data
     unprocessed_data = data
-	 
 
-      # Scopo di questo ciclo è ricavare le diverse parti dell'header
-      HEADER_FIELDS.each do |field_name|
-        # Scansioniamo l'header fino al prossimo elemento di separazione ('|')
-        match_data = HEADER_SCANNER.match(unprocessed_data)
-        # Se non c'è match allora il campo manca e andiamo avanti
-        break if match_data.nil?
-        # Il valore matchato va nella seguente variabile
-        escaped_field_value = match_data[1]
+    # Determiniamo se il log da parsare è in formato CEF o LEEF
+    if unprocessed_data.include? "CEF"
+      header_fields = CEF_HEADER_FIELDS
+      else 
+	header_fields = LEEF_HEADER_FIELDS	
+    end
 
-        # La prossima parte di codice viene saltata se la condizione è verificata
-        next if escaped_field_value.nil?
-        # Controlliamo la presenze di sequenze di escape e rimuoviamo per evitare ambiguità
-        unescaped_field_value = escaped_field_value.gsub(HEADER_ESCAPE_CAPTURE, '\1')
-        # A questo punto nell'evento settiamo la coppia header-valore trovata
-        event.set(field_name, unescaped_field_value)
-        # Conserviamo in unprocessed data tutto quello che c'è dopo il match
-        unprocessed_data = match_data.post_match
-      end
-      # Controlla se nel primo campo dell'header ci sono degli spazi: in tal caso è presente un header syslog
-      if event.get('cefVersion').include? ' '
-        # Separa il campo cefVersion usando rpartition, che separa rispetto all'ultima occorrenza 	
-        split_cef_version = event.get('cefVersion').rpartition(' ')
-        # La prima parte è l'header syslog
-        event.set('SyslogHeader', split_cef_version[0])
-        # L'ultima parte è la versione di CEF usata (nota: in [1] c'è l'elemento di separazione, in questo caso lo spazio) 
-        event.set('cefVersion',split_cef_version[2])
-      end
-      # Leviamo "CEF:" dal campo, lasciando quindi solo il numero della versione di CEF usata
-      event.set('cefVersion', event.get('cefVersion').sub(/^CEF:/, ''))
+    # Scopo di questo ciclo è ricavare le diverse parti dell'header  
+    header_fields.each do |field_name|
+      # Scansioniamo l'header fino al prossimo elemento di separazione ('|')
+      match_data = HEADER_SCANNER.match(unprocessed_data)
+      # Se non c'è match allora il campo manca e andiamo avanti
+      break if match_data.nil?
+      # Il valore matchato va nella seguente variabile
+      escaped_field_value = match_data[1]
 
+      # La prossima parte di codice viene saltata se la condizione è verificata
+      next if escaped_field_value.nil?
+      # Controlliamo la presenze di sequenze di escape e rimuoviamo per evitare ambiguità
+      unescaped_field_value = escaped_field_value.gsub(HEADER_ESCAPE_CAPTURE, '\1')
+      # A questo punto nell'evento settiamo la coppia header-valore trovata
+      event.set(field_name, unescaped_field_value)
+      # Conserviamo in unprocessed data tutto quello che c'è dopo il match
+      unprocessed_data = match_data.post_match
+    end
+    # Se nel primo campo dell'header (contenente la versione di CEF o LEEF) ci sono degli spazi è presente un header syslog
+    if event.get(header_fields[0]).include? ' '
+      # Separa il campo cefVersion (o leefVersion) usando rpartition, che separa rispetto all'ultima occorrenza 	
+      split_version = event.get(header_fields[0]).rpartition(' ')
+      # La prima parte è l'header syslog
+      event.set('SyslogHeader', split_version[0])
+      # L'ultima parte è la versione di CEF o LEEF usata (nota: in [1] c'è l'elemento di separazione, in questo caso lo spazio) 
+      event.set(header_fields[0],split_version[2])
+    end
+    # Leviamo "CEF:" o "LEEF:" dal campo, lasciando quindi solo il numero della versione di CEF usata
+    event.set(header_fields[0], event.get(header_fields[0]).sub(/^CEF:/, '').sub(/^LEEF:/, ''))
+ 
     # Alla fine del ciclo abbiamo elaborato l'header e quello che rimane è il messaggio
     message = unprocessed_data
 
@@ -216,8 +174,8 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
       extension_field_key = MAPPINGS.fetch(extension_field_key, extension_field_key)
         # Con il seguente comando evitiamo che campi con sintassi simile a quella di un array possano creare errori
         extension_field_key = extension_field_key.sub(EXTENSION_KEY_ARRAY_CAPTURE, '[\1]\2') if extension_field_key.end_with?(']')
-        # Controlliamo la presenze di sequenze di escape e di simboli ", poi rimuoviamo per evitare problemi in output
-	extension_field_value = raw_extension_field_value.gsub(EXTENSION_VALUE_ESCAPE_CAPTURE, '\1').gsub(/["]/,'')
+        # Controlliamo la presenze di sequenze di escape e di altri simboli, poi rimuoviamo per evitare problemi in output
+	extension_field_value = raw_extension_field_value.gsub(EXTENSION_VALUE_ESCAPE_CAPTURE, '\1').gsub(/["]/,'').gsub("\\n",' ')
 	
 	# A questo punto nell'evento settiamo la coppia key-value trovata
       event.set(extension_field_key, extension_field_value)
@@ -228,7 +186,7 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
     yield event
 
     # In caso di errore viene mostrato il seguente messaggio
-  rescue => e
+    rescue => e
     @logger.error("Failed to decode TrendMicro payload. Generating failure event with payload in message field.", :error => e.message, :backtrace => e.backtrace, :data => data)
     yield LogStash::Event.new("message" => data, "tags" => ["_TrendMicroparsefailure"])
   end
