@@ -8,7 +8,7 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
   CEF_HEADER_FIELDS = ['CEF_Version','Vendor','Product','Version','Signature_ID','Name','Severity']
   LEEF_HEADER_FIELDS = ['LEEF_Version','Vendor','Product','Version','Event_ID']
     
-  # Le seguenti coppie permettono di estendere i nomi dei campi della sezione Extension di log di TrendMicro
+  # Le seguenti coppie permettono di estendere i nomi dei campi della sezione Extension dei log di TrendMicro
   MAPPINGS = {
         "act" => "Action",
 	"aggregationType" => "AggregationType",
@@ -38,6 +38,7 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
         "duser" => "UserInformation",
         "dvc" => "DeviceAddress",
         "dvchost" => "DeviceHostName",
+	"dhost" => "DeviceHostname",
         "desc" => "Description",
 	"dstMAC" => "DestinationMACAddress",
 	"dstPort" => "DestinationPort",
@@ -53,6 +54,7 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
         "proto" => "TransportProtocol",
         "request" => "Request",
         "repeatCount" => "RepeatCount",
+	"rt" => "ReceiptTime",
         "shost" => "SourceHostName",
         "smac" => "SourceMacAddress",
         "spt" => "SourcePort",
@@ -85,19 +87,19 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
   HEADER_PATTERN = /(?:\\\||\\\\|[^|])*?/
   HEADER_SCANNER = /(#{HEADER_PATTERN})#{Regexp.quote('|')}/
 
-  # Regexp per trovare un backslash o un pipe che si trova dopo un backslash
+  # Regexp per trovare escape character nell'header (backslash o pipe)
   HEADER_ESCAPE_CAPTURE = /\\([\\|])/
 
-  # Regexp per trovare un backslash o un uguale che si trova dopo un backslash
-  EXTENSION_VALUE_ESCAPE_CAPTURE = /\\([\\=])/
-
-  # Regexp per individuare le key nella sezione Extension
+  # Regexp per individuare le coppie key/value nel campo Extension
   EXTENSION_KEY_PATTERN = /(?:\w+(?:\.[^\s]\w+[^\|\s\.\=\\]+)?(?==))/
-  # Regexp per individuare i value della sezione Extension
   EXTENSION_VALUE_PATTERN = /(?:\S|\s++(?!#{EXTENSION_KEY_PATTERN}=))*/
-  
-  # Uniamo le precedenti due regexp per individuare le coppie key/value
   EXTENSION_KEY_VALUE_SCANNER = /(#{EXTENSION_KEY_PATTERN})=(#{EXTENSION_VALUE_PATTERN})\s*/
+    
+  # Regexp per trovare escape character nel campo Extension (backslash o uguale)
+  EXTENSION_VALUE_ESCAPE_CAPTURE = /\\([\\=])/
+  # Regexp per trovare in Extension delle key con sintassi simile a quella di un array
+  EXTENSION_KEY_ARRAY_CAPTURE = /^([^\[\]]+)((?:\[[0-9]+\])+)$/
+  
 
   public
   def initialize(params={})
@@ -107,13 +109,13 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
     @utf8_charset.logger = self.logger
   end
 
-  # Definiamo il parser vero e proprio
+  # Definiamo il parser
   def decode(data, &block)
     # Creiamo l'evento
     event = LogStash::Event.new
     # Usiamo per il log la codifica UTF-8
     @utf8_charset.convert(data)
-    # Se l'encoding non ha avuto successo non andiamo avanti nel parsing, perchè nascerebbero errori
+    # Se l'encoding non ha avuto successo non andiamo avanti nel parsing, nascerebbero errori
     fail('invalid byte sequence in UTF-8') unless data.valid_encoding?
 
     # Nel caso ci siano caratteri a delimitare l'inizio e alla fine del log, vengono rimossi
@@ -124,27 +126,27 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
     # Il log da parsare viene inserito in una variabile dal nome unprocessed_data
     unprocessed_data = data
 
-    # Determiniamo se il log da parsare è in formato CEF o LEEF
+    # Determiniamo il formato del log da parsare (CEF o LEEF)
     if unprocessed_data.include? "CEF"
       header_fields = CEF_HEADER_FIELDS
       else 
 	header_fields = LEEF_HEADER_FIELDS	
     end
 
-    # Scopo di questo ciclo è ricavare le diverse parti dell'header  
+    # Ciclo per parsare l'header  
     header_fields.each do |field_name|
       # Scansioniamo l'header fino al prossimo elemento di separazione ('|')
       match_data = HEADER_SCANNER.match(unprocessed_data)
-      # Se non c'è match allora il campo manca e andiamo avanti
+      # In assenza di match il campo manca e andiamo avanti
       break if match_data.nil?
-      # Il valore matchato va nella seguente variabile
+      # Il valore trovato va nella seguente variabile
       escaped_field_value = match_data[1]
 
-      # La prossima parte di codice viene saltata se la condizione è verificata
+      # La prossima parte di codice viene saltata se condizione verificata
       next if escaped_field_value.nil?
-      # Controlliamo la presenze di sequenze di escape e rimuoviamo per evitare ambiguità
+      # Controlliamo la presenza di escape sequence di escape e rimuoviamo
       unescaped_field_value = escaped_field_value.gsub(HEADER_ESCAPE_CAPTURE, '\1')
-      # A questo punto nell'evento settiamo la coppia header-valore trovata
+      # Nell'evento settiamo la coppia header-value trovata
       event.set(field_name, unescaped_field_value)
       # Conserviamo in unprocessed data tutto quello che c'è dopo il match
       unprocessed_data = match_data.post_match
@@ -155,39 +157,50 @@ class LogStash::Codecs::Trendmicro < LogStash::Codecs::Base
       split_version = event.get(header_fields[0]).rpartition(' ')
       # La prima parte è l'header syslog
       event.set('SyslogHeader', split_version[0])
-      # L'ultima parte è la versione di CEF o LEEF usata (nota: in [1] c'è l'elemento di separazione, in questo caso lo spazio) 
+      # L'ultima parte è la versione di CEF o LEEF usata 
+      # (nota: in [1] c'è l'elemento di separazione, in questo caso lo spazio) 
       event.set(header_fields[0],split_version[2])
     end
-    # Leviamo "CEF:" o "LEEF:" dal campo, lasciando quindi solo il numero della versione di CEF usata
+    # Leviamo "CEF:" o "LEEF:" dal campo, lasciando quindi solo il numero della versione usata
     event.set(header_fields[0], event.get(header_fields[0]).sub(/^CEF:/, '').sub(/^LEEF:/, ''))
  
-    # Alla fine del ciclo abbiamo elaborato l'header e quello che rimane è il messaggio
+    unless event.get('SyslogHeader').nil?
+    # Controlla il campo Host per vedere se presenta un carattere '<'
+      if event.get('SyslogHeader').include? '<'
+        # Leva dal campo host il termine <.> 	
+        clean_header = event.get('SyslogHeader').gsub(/\<\d+\>/,'')
+	# Aggiorno l'host 
+        event.set('SyslogHeader', clean_header)
+      end
+    end
+
+    # Alla fine del ciclo abbiamo elaborato l'header e rimane il messaggio
     message = unprocessed_data
 
-    # Se la variabile messaggio è impostato e contiene degli uguali
     if message && message.include?('=')
       # Leviamo dal messaggio eventuali caratteri di spazio alla fine e all'inizio
       message = message.strip
-      # Scopo di questo ciclo è ricavare le diverse coppie key/value del messaggio
+      # Ricaviamo le diverse coppie key/value del messaggio
       message.scan(EXTENSION_KEY_VALUE_SCANNER) do |extension_field_key, raw_extension_field_value|
-      # Mappiamo per espandere le espressioni dei campi key che di norma sono abbreviate
-      extension_field_key = MAPPINGS.fetch(extension_field_key, extension_field_key)
-        # Con il seguente comando evitiamo che campi con sintassi simile a quella di un array possano creare errori
+        # Mappiamo per espandere le espressioni dei campi key che di norma sono abbreviate
+        extension_field_key = MAPPINGS.fetch(extension_field_key, extension_field_key)
+        # Regexp per evitare che key con sintassi simile a quella di un array possano creare errori
         extension_field_key = extension_field_key.sub(EXTENSION_KEY_ARRAY_CAPTURE, '[\1]\2') if extension_field_key.end_with?(']')
-        # Controlliamo la presenze di sequenze di escape e di altri simboli, poi rimuoviamo per evitare problemi in output
+        # Controlliamo la presenze di escape sequence e di altri simboli, poi rimuoviamo
 	extension_field_value = raw_extension_field_value.gsub(EXTENSION_VALUE_ESCAPE_CAPTURE, '\1').gsub(/["]/,'').gsub("\\n",' ')
-	
-	# A questo punto nell'evento settiamo la coppia key-value trovata
-      event.set(extension_field_key, extension_field_value)
+	# Nell'evento settiamo la coppia key-value trovata
+        event.set(extension_field_key, extension_field_value)
       end
     end
+    # Aggiungiamo il log non parsato
+    event.set("RAW_MESSAGE", data)
 
     # Portiamo in uscita l'evento
     yield event
 
     # In caso di errore viene mostrato il seguente messaggio
     rescue => e
-    @logger.error("Failed to decode TrendMicro payload. Generating failure event with payload in message field.", :error => e.message, :backtrace => e.backtrace, :data => data)
-    yield LogStash::Event.new("message" => data, "tags" => ["_TrendMicroparsefailure"])
-  end
+      @logger.error("Failed to decode TrendMicro payload. Generating failure event with payload in message field.", :error => e.message, :backtrace => e.backtrace, :data => data)
+      yield LogStash::Event.new("message" => data, "tags" => ["_TrendMicroparsefailure"])
+    end
 end
